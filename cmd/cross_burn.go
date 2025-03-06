@@ -723,10 +723,8 @@ func getNonce4MultiEth(sender common.Address, client ethinterface.EthClientSpec,
 		return getNonceFromChain(sender, client, addr2TxNonce)
 	}
 	if nonceMutex, exist := addr2TxNonce[sender]; exist {
-		//fmt.Println("getNonce4MultiEth address", sender.String(), "nonce atomic.AddInt64 before", nonceMutex.Nonce)
 		atomic.AddInt64(&nonceMutex.Nonce, 1)
 		addr2TxNonce[sender] = nonceMutex
-		//fmt.Println("getNonce4MultiEth address", sender.String(), "nonce atomic.AddInt64 after", nonceMutex.Nonce)
 		return big.NewInt(nonceMutex.Nonce), nil
 	}
 	return getNonceFromChain(sender, client, addr2TxNonce)

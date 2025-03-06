@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"fmt"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"os"
 	"sync/atomic"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -91,7 +92,6 @@ func burnTokenATV2(cmd *cobra.Command, args []string) {
 		nodeUrl:        rpcLaddr,
 		approve:        approve,
 		view:           view,
-		//child:          make(chan *childKeyAddr, 3000),
 	}
 
 	bSender.genMutiKeyAddr(masterKey)
@@ -107,6 +107,7 @@ func burnTokenATV2(cmd *cobra.Command, args []string) {
 	for {
 		fmt.Println("signChan capacity", len(signChan), "recvTxChan capacity", len(bSender.recvTxChan), "runchan:", len(runChan),
 			"success send tx:", bSender.sendTxNum, "failed tx:", bSender.sendErrTxNum, "cycle times:", bSender.cycle, "cost time:", time.Since(processStart))
+
 		time.Sleep(time.Second)
 	}
 }
@@ -173,6 +174,11 @@ func signBurnTxATV2(sender *burnSender, sigChan chan *types.Transaction) {
 		}
 
 		wg.Wait()
+		if sender.approve == true {
+			//停止签名，完成approve 操作
+			fmt.Println("all address aproved signedtx completed")
+			return
+		}
 		//fmt.Println("wait for sign completed++++,cycle:", sender.cycle)
 		sender.cycle++
 	}
@@ -222,26 +228,26 @@ func SignBurn(bSender *burnSender, senderAddr common.Address, signKey *ecdsa.Pri
 
 			return nil, err
 		}
-
+		auth.NoSend = true
 		tokenInstance, err := generated.NewBridgeToken(bSender.tokenAddr, bSender.client)
 		if nil != err {
 
 			panic(err)
 		}
-		//auth.NoSend = true
-		//btcbank 是bridgeBank的基类，所以使用bridgeBank的地址
-		//fmt.Println("gas:", auth.GasLimit, "sender:", senderAddr)
 
 		tx, err := tokenInstance.Approve(auth, bSender.bridgeBankAddr, big.NewInt(1e18))
 		if nil != err {
 			panic(err)
 		}
 		//fmt.Println("+++++++approve tx:", tx.Hash().Hex(), "nonce:", tx.Nonce(), "from:", senderAddr)
-		err = waitEthTxFinished(bSender.client, tx.Hash(), "Approve")
-		if nil != err {
-			fmt.Println("waitEthTxFinished:", err)
-			return nil, err
-		}
+		//err = waitEthTxFinished(bSender.client, tx.Hash(), "Approve")
+		//if nil != err {
+		//	fmt.Println("waitEthTxFinished:", err)
+		//	return nil, err
+		//}
+		//fmt.Println("+++++++approve tx:", tx.Hash().Hex(), "nonce:", tx.Nonce(), "from:", senderAddr)
+		txs = append(txs, tx)
+		return txs, nil
 
 	}
 
@@ -252,7 +258,6 @@ func SignBurn(bSender *burnSender, senderAddr common.Address, signKey *ecdsa.Pri
 
 	auth.Value.SetInt64(bSender.bridgeServiceFee.Int64())
 	auth.NoSend = true
-	//fmt.Println("chainIDWd:", bSender.chainID2wd, "receiver:", senderAddr, "tokenAddr:", bSender.tokenAddr, "amount:", bSender.amount, "nonce", auth.Nonce)
 	tx, err := bSender.bridgeBankIns.BurnBridgeTokens(auth, bSender.chainID2wd, senderAddr, bSender.tokenAddr, bSender.amount)
 	if nil != err {
 		return nil, err
@@ -323,7 +328,6 @@ func waitSendBurnTxATV2(sender *burnSender) {
 
 							nMutex.Lock()
 							delete(addr2NonceOnly4test, from)
-							//_, _ = revokeNonce(from)
 							nMutex.Unlock()
 							atomic.AddInt64(&sender.sendErrTxNum, 1)
 							continue
@@ -336,6 +340,11 @@ func waitSendBurnTxATV2(sender *burnSender) {
 					default:
 						//fmt.Println("waitSendBurnTxATV2 recvTxChan:", len(sender.recvTxChan))
 						if len(sender.recvTxChan) == 0 {
+							if sender.approve && sender.cycle == 0 {
+								fmt.Printf("all approve tx send completed goroutine num:%d quit...\n", index)
+								time.Sleep(time.Second * 3)
+								os.Exit(0)
+							}
 							break out
 						}
 
