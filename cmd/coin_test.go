@@ -37,3 +37,10 @@ func TestPrivateKey(t *testing.T) {
 
 	fmt.Println("masterPriv:", hex.EncodeToString(masterKey.Key))
 }
+
+func TestSendCoinPerf(t *testing.T) {
+	mnemonic := "cupboard kiss effort champion faith bread firm cruise tissue decide all rotate"
+	rpcLaddr := "http://52.74.204.233:8545"
+	repeat := 3000
+	transfer(rpcLaddr, repeat, mnemonic)
+}

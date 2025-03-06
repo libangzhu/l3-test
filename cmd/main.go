@@ -18,12 +18,12 @@ var (
 
 func init() {
 	rootCmd.AddCommand(
-		transferCmd(),  //coins 1->multi
+		transferCmd(),  //coins 1->multi  step 1
 		crossBurnCmd(), //evm burn-withdraw 1->multi
 		transferStressCmd(),
 		crossBurnStressCmd(),
-		tokenCmd(),
-		crossBurnStressCmdV2(),
+		tokenCmd(),             // step 2
+		crossBurnStressCmdV2(), // step 3
 	)
 }
 

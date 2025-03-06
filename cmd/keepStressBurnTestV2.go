@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"os"
+
+	"os/signal"
+
 	"sync/atomic"
+	"syscall"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -55,6 +59,7 @@ func burnTokenATV2(cmd *cobra.Command, args []string) {
 	chainIDWd, err := cmd.Flags().GetInt("chainID")
 	approve, _ := cmd.Flags().GetBool("approve")
 	view, _ := cmd.Flags().GetBool("view")
+
 	fmt.Println("registerAddr:", registerAddr)
 	fmt.Println("token:", token)
 	fmt.Println("approve for burn:", approve)
@@ -94,15 +99,37 @@ func burnTokenATV2(cmd *cobra.Command, args []string) {
 		view:           view,
 	}
 
+	// 提前生成多个地址(repeat)信息
 	bSender.genMutiKeyAddr(masterKey)
 
 	signChan := make(chan *types.Transaction, 10000)
-	//循环批量签名
+	//循环批量生成签名交易(无限循环)
 	go signBurnTxATV2(bSender, signChan)
-	//等待签名数量达到一定后往发送管道输送
+	//等待签名数量达到一定后往发送管道输送(recvTxChan/runChan)
 	go waitSignBurnTxATV2(signChan, bSender)
+	//并发发送交易
 	go waitSendBurnTxATV2(bSender)
 	processStart := time.Now()
+
+	// 优雅退出监控
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT)
+	go func() {
+		fmt.Println("Register hook for quiting.")
+		// 等待退出信号
+		sig := <-sigChan
+		fmt.Printf("Received signal: %v\n", sig)
+		// 执行清理逻辑，等待交易通道为空
+		for {
+			fmt.Println("Wait for cleaning tx channel.....")
+			time.Sleep(1 * time.Second)
+			if len(bSender.recvTxChan) == 0 {
+				break
+			}
+		}
+		// 退出程序
+		os.Exit(0)
+	}()
 
 	for {
 		fmt.Println("signChan capacity", len(signChan), "recvTxChan capacity", len(bSender.recvTxChan), "runchan:", len(runChan),
@@ -138,6 +165,7 @@ func (b *burnSender) genMutiKeyAddr(masterKey *bip32.Key) {
 }
 
 func signBurnTxATV2(sender *burnSender, sigChan chan *types.Transaction) {
+	// 将多个地址交易均分给CPU核心
 	numCPUs := runtime.NumCPU()
 	txCnt := len(sender.child)
 	addrPerGoroutime := txCnt / numCPUs
@@ -145,6 +173,7 @@ func signBurnTxATV2(sender *burnSender, sigChan chan *types.Transaction) {
 	time.Sleep(time.Second * 3)
 	for {
 		var wg sync.WaitGroup
+		//当交易数比CPU核数还要少的情况，一次性处理
 		if addrPerGoroutime == 0 {
 			wg.Add(1)
 			for i := 0; i < len(sender.child); i++ {
@@ -161,6 +190,7 @@ func signBurnTxATV2(sender *burnSender, sigChan chan *types.Transaction) {
 
 		} else {
 			for i := 0; i < numCPUs-1; i++ {
+				// 按CPU内核数分段处理
 				partOfchild := sender.child[i*addrPerGoroutime : (i+1)*addrPerGoroutime]
 				wg.Add(1)
 				go multiSign(partOfchild, sender, sigChan, &wg)
@@ -213,6 +243,7 @@ func SignBurn(bSender *burnSender, senderAddr common.Address, signKey *ecdsa.Pri
 		Context: context.Background(),
 	}
 
+	// 跨链费用计算，只计算一次（可以拿到外层逻辑）
 	if bSender.bridgeServiceFee == nil {
 		bridgeServiceFee, err := bSender.bridgeBankIns.BridgeServiceFee(opts)
 		if nil != err {
@@ -281,7 +312,9 @@ func waitSignBurnTxATV2(sigChan chan *types.Transaction, sender *burnSender) {
 			for tx := range sigChan {
 				count++
 				sender.recvTxChan <- tx
+				// 按批次处理（数量为测试目标交易地址数量）
 				if count >= sender.repeat {
+					// 按并发数量触发执行开关（CPU核数）
 					startRecord = time.Now()
 					for i := 0; i < sender.proceeNum; i++ {
 						runChan <- true
@@ -312,7 +345,6 @@ func waitSendBurnTxATV2(sender *burnSender) {
 			}
 
 			for {
-
 				<-runChan
 			out:
 				for {
