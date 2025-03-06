@@ -100,7 +100,7 @@ func transfer(cmd *cobra.Command, args []string) {
 			return
 		}
 		addr := crypto.PubkeyToAddress(*cpub)
-		tx := mSender.SignJuTx(addr, mSender.nonce_start+uint64(i), big.NewInt(1e17))
+		tx := mSender.SignJuTx(addr, mSender.nonce_start+uint64(i), big.NewInt(1e18))
 
 		txs = append(txs, tx)
 	}
@@ -380,8 +380,8 @@ func (m *multiSender) sendJuTxV2(i int) {
 				m.txMutex.Lock()
 				m.sendTxNum++
 				m.txMutex.Unlock()
-				log.Fatalf("Failed to send transaction: %v", err)
-				return
+				log.Println("Failed to send transaction: %v", err, "sendTx:", m.atoTxNum)
+				break
 			}
 			m.txMutex.Lock()
 			m.sendTxNum++
@@ -408,7 +408,7 @@ func (m *multiSender) SignJuTx(to common.Address, nonce uint64, amount *big.Int)
 	}
 
 	// 5. 创建交易
-	fmt.Println("gasPrice", gasPrice, "nonce", nonce, "amount", amount)
+	//fmt.Println("gasPrice", gasPrice, "nonce", nonce, "amount", amount)
 	tx := types.NewTransaction(nonce, to, amount, gasLimit, big.NewInt(gasPrice.Int64()), nil)
 	// 6. 使用私钥签名交易
 
