@@ -268,18 +268,24 @@ func SignBurn(bSender *burnSender, senderAddr common.Address, signKey *ecdsa.Pri
 }
 
 func waitSignBurnTxATV2(sigChan chan *types.Transaction, sender *burnSender) {
+	var startRecord time.Time
+	var sendCost time.Duration
 	for {
-		//fmt.Println("len(sigChan):", len(sigChan), "sender.repeat", sender.repeat, "recvchan len", len(sender.recvTxChan))
-		//time.Sleep(time.Millisecond * 300)
 		var count int
 		if len(sender.recvTxChan) == 0 {
-
+			if !startRecord.IsZero() { //控制发送速度
+				sendCost = time.Now().Sub(startRecord)
+				if sendCost < time.Millisecond*800 {
+					continue
+				}
+			}
 			for tx := range sigChan {
 				count++
 				sender.recvTxChan <- tx
 				// 按批次处理（数量为测试目标交易地址数量）
 				if count >= sender.repeat {
 					// 按并发数量触发执行开关（CPU核数）
+					startRecord = time.Now()
 					for i := 0; i < sender.proceeNum; i++ {
 						runChan <- true
 					}
@@ -302,13 +308,13 @@ func waitSendBurnTxATV2(sender *burnSender) {
 	}
 	for i := 0; i < sender.proceeNum; i++ {
 		go func(index int) {
+			client, err := ethclient.Dial(sender.nodeUrl)
+			if err != nil {
+				fmt.Println(err)
+				panic(err)
+			}
+
 			for {
-				// 每个并发携程使用自己单独的连接
-				client, err := ethclient.Dial(sender.nodeUrl)
-				if err != nil {
-					fmt.Println(err)
-					panic(err)
-				}
 				<-runChan
 			out:
 				for {
@@ -318,13 +324,14 @@ func waitSendBurnTxATV2(sender *burnSender) {
 					case tx := <-sender.recvTxChan:
 						err := client.SendTransaction(context.Background(), tx)
 						if err != nil {
-							//signer := types.NewEIP155Signer(tx.ChainId())
-							//from, _ := types.Sender(signer, tx)
-							//fmt.Println("Failed to sendTxAT with err:", err, "will retry...:", from)
+							signer := types.NewEIP155Signer(tx.ChainId())
+							from, _ := types.Sender(signer, tx)
+							fmt.Println("Failed to sendTxAT with err:", err, "will retry...:", from)
 
-							//nMutex.Lock()
+							nMutex.Lock()
+							delete(addr2NonceOnly4test, from)
 							//_, _ = revokeNonce(from)
-							//nMutex.Unlock()
+							nMutex.Unlock()
 							atomic.AddInt64(&sender.sendErrTxNum, 1)
 							continue
 						}
