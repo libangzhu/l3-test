@@ -25,7 +25,7 @@ func transferCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "transfer",
 		Short: "transfer ju",
-		Run:   transfer,
+		Run:   transferCoin,
 	}
 	addTransferFlags(cmd)
 	return cmd
@@ -39,10 +39,14 @@ func addTransferFlags(cmd *cobra.Command) {
 	_ = cmd.MarkFlagRequired("mnemonic")
 }
 
-func transfer(cmd *cobra.Command, args []string) {
+func transferCoin(cmd *cobra.Command, args []string) {
 	rpcLaddr, _ := cmd.Flags().GetString("rpc_laddr")
 	repeat, _ := cmd.Flags().GetInt("repeat")
 	mnemonic, _ := cmd.Flags().GetString("mnemonic")
+	transfer(rpcLaddr, repeat, mnemonic)
+}
+
+func transfer(rpcLaddr string, repeat int, mnemonic string) {
 
 	seed, err := bip39.NewSeedWithErrorChecking(mnemonic, "")
 	if err != nil {
@@ -84,6 +88,7 @@ func transfer(cmd *cobra.Command, args []string) {
 	mSender.nonce_start = nonce
 	mSender.recvTxChan = make(chan *types.Transaction, 20000)
 
+	// build send coin targets' transactions and sign
 	var privkeyArr []*ecdsa.PrivateKey
 	var txs []*types.Transaction
 	for i := 0; i < repeat; i++ {
@@ -106,7 +111,9 @@ func transfer(cmd *cobra.Command, args []string) {
 	}
 	fmt.Println("+++++++total signed txnum:", len(txs))
 	time.Sleep(time.Second * 2)
-	mSender.proceeNum = 50
+	// 并发处理交易发送
+	numCPUs := runtime.NumCPU()
+	mSender.proceeNum = numCPUs
 	for i := 0; i < mSender.proceeNum; i++ {
 		go func(index int) {
 			mSender.sendJuTxV2(index)
