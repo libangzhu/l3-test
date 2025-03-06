@@ -5,7 +5,10 @@ import (
 	"crypto/ecdsa"
 	"fmt"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"os"
+	"os/signal"
 	"sync/atomic"
+	"syscall"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -54,6 +57,7 @@ func burnTokenATV2(cmd *cobra.Command, args []string) {
 	chainIDWd, err := cmd.Flags().GetInt("chainID")
 	approve, _ := cmd.Flags().GetBool("approve")
 	view, _ := cmd.Flags().GetBool("view")
+
 	fmt.Println("registerAddr:", registerAddr)
 	fmt.Println("token:", token)
 	fmt.Println("approve for burn:", approve)
@@ -98,13 +102,32 @@ func burnTokenATV2(cmd *cobra.Command, args []string) {
 	bSender.genMutiKeyAddr(masterKey)
 
 	signChan := make(chan *types.Transaction, 10000)
-	//循环批量生成签名交易(无限循环)
-	go signBurnTxATV2(bSender, signChan)
-	//等待签名数量达到一定后往发送管道输送(recvTxChan/runChan)
-	go waitSignBurnTxATV2(signChan, bSender)
-	//并发发送交易
-	go waitSendBurnTxATV2(bSender)
+	////循环批量生成签名交易(无限循环)
+	//go signBurnTxATV2(bSender, signChan)
+	////等待签名数量达到一定后往发送管道输送(recvTxChan/runChan)
+	//go waitSignBurnTxATV2(signChan, bSender)
+	////并发发送交易
+	//go waitSendBurnTxATV2(bSender)
 	processStart := time.Now()
+
+	// 优雅退出
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT)
+	go func() {
+		// 等待退出信号
+		sig := <-sigChan
+		fmt.Printf("Received signal: %v\n", sig)
+		// 执行清理逻辑
+		for {
+			fmt.Println("Wait for cleaning tx channel.....")
+			time.Sleep(1 * time.Second)
+			if len(bSender.recvTxChan) == 0 {
+				break
+			}
+		}
+		// 退出程序
+		os.Exit(0)
+	}()
 
 	for {
 		fmt.Println("signChan capacity", len(signChan), "recvTxChan capacity", len(bSender.recvTxChan), "runchan:", len(runChan),
