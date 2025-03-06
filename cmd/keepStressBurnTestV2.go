@@ -102,22 +102,23 @@ func burnTokenATV2(cmd *cobra.Command, args []string) {
 	bSender.genMutiKeyAddr(masterKey)
 
 	signChan := make(chan *types.Transaction, 10000)
-	////循环批量生成签名交易(无限循环)
-	//go signBurnTxATV2(bSender, signChan)
-	////等待签名数量达到一定后往发送管道输送(recvTxChan/runChan)
-	//go waitSignBurnTxATV2(signChan, bSender)
-	////并发发送交易
-	//go waitSendBurnTxATV2(bSender)
+	//循环批量生成签名交易(无限循环)
+	go signBurnTxATV2(bSender, signChan)
+	//等待签名数量达到一定后往发送管道输送(recvTxChan/runChan)
+	go waitSignBurnTxATV2(signChan, bSender)
+	//并发发送交易
+	go waitSendBurnTxATV2(bSender)
 	processStart := time.Now()
 
-	// 优雅退出
+	// 优雅退出监控
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT)
 	go func() {
+		fmt.Println("Register hook for quiting.")
 		// 等待退出信号
 		sig := <-sigChan
 		fmt.Printf("Received signal: %v\n", sig)
-		// 执行清理逻辑
+		// 执行清理逻辑，等待交易通道为空
 		for {
 			fmt.Println("Wait for cleaning tx channel.....")
 			time.Sleep(1 * time.Second)
