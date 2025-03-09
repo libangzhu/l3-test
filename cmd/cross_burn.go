@@ -12,6 +12,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/log"
+
 	"github.com/shopspring/decimal"
 	"github.com/spf13/cobra"
 	"github.com/tyler-smith/go-bip32"
@@ -310,9 +311,15 @@ type burnSender struct {
 	gasPrice         *big.Int
 	nodeUrl          string
 	//child            chan *childKeyAddr
-	child   []*childKeyAddr
-	approve bool
-	view    bool
+	child        []*childKeyAddr
+	approve      bool
+	view         bool
+	interval     int64
+	duration     int64
+	maxPending   uint
+	pendingCount uint
+	queuedCount  uint
+	hashChan     chan string
 }
 
 type waitBurn struct {

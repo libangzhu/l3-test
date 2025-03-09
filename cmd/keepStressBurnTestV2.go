@@ -1,25 +1,25 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/ecdsa"
 	"fmt"
-	"github.com/ethereum/go-ethereum/ethclient"
-	"os"
-
-	"os/signal"
-
-	"sync/atomic"
-	"syscall"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/spf13/cobra"
 	"github.com/tyler-smith/go-bip32"
 	"github.com/tyler-smith/go-bip39"
 	"github.com/zhengjunhe/l3-test/cmd/contracts/contracts4juchain/generated"
+	"os"
+	"os/signal"
+	"sync/atomic"
+	"syscall"
+
 	"math/big"
 	"runtime"
 	"sync"
@@ -39,7 +39,9 @@ func crossBurnStressCmdV2() *cobra.Command {
 func addBurnStressV2Flags(cmd *cobra.Command) {
 
 	cmd.Flags().IntP("chainID", "w", 97, "cross to dst chain ID")
-
+	cmd.Flags().Int64P("duration", "d", 120, "Continuous stress test time default 120s")
+	cmd.Flags().Int64P("interval", "i", 30, "interval time,default 30s")
+	cmd.Flags().IntP("maxPending", "p", 3000, "max pending number,default 3000")
 	cmd.Flags().StringP("token", "t", "", "token contract address")
 	cmd.Flags().StringP("registerAddr", "c", "", "registerAddr contract address")
 	cmd.Flags().IntP("repeat", "r", 3000, "repeat number")
@@ -59,14 +61,20 @@ func burnTokenATV2(cmd *cobra.Command, args []string) {
 	chainIDWd, err := cmd.Flags().GetInt("chainID")
 	approve, _ := cmd.Flags().GetBool("approve")
 	view, _ := cmd.Flags().GetBool("view")
-
+	duration, _ := cmd.Flags().GetInt64("duration")
+	interval, _ := cmd.Flags().GetInt64("interval")
+	maxPending, _ := cmd.Flags().GetInt("maxPending")
 	fmt.Println("registerAddr:", registerAddr)
 	fmt.Println("token:", token)
 	fmt.Println("approve for burn:", approve)
 	if err != nil {
 		panic(err)
 	}
-	mnemonic, _ := cmd.Flags().GetString("mnemonic")
+	mnemonic, err := cmd.Flags().GetString("mnemonic")
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("mnemonic:", mnemonic)
 	seed, err := bip39.NewSeedWithErrorChecking(mnemonic, "")
 	if err != nil {
 		fmt.Println("NewSeedWithErrorChecking with error:", err.Error())
@@ -97,6 +105,10 @@ func burnTokenATV2(cmd *cobra.Command, args []string) {
 		nodeUrl:        rpcLaddr,
 		approve:        approve,
 		view:           view,
+		interval:       interval,
+		duration:       duration,
+		maxPending:     uint(maxPending),
+		hashChan:       make(chan string, 500),
 	}
 
 	// 提前生成多个地址(repeat)信息
@@ -109,6 +121,8 @@ func burnTokenATV2(cmd *cobra.Command, args []string) {
 	go waitSignBurnTxATV2(signChan, bSender)
 	//并发发送交易
 	go waitSendBurnTxATV2(bSender)
+	go pendingTxCount(client, bSender)
+	go write2File(bSender)
 	processStart := time.Now()
 
 	// 优雅退出监控
@@ -123,7 +137,10 @@ func burnTokenATV2(cmd *cobra.Command, args []string) {
 		for {
 			fmt.Println("Wait for cleaning tx channel.....")
 			time.Sleep(1 * time.Second)
+			//先关闭recvchan
+			close(bSender.recvTxChan)
 			if len(bSender.recvTxChan) == 0 {
+
 				break
 			}
 		}
@@ -133,7 +150,8 @@ func burnTokenATV2(cmd *cobra.Command, args []string) {
 
 	for {
 		fmt.Println("signChan capacity", len(signChan), "recvTxChan capacity", len(bSender.recvTxChan), "runchan:", len(runChan),
-			"success send tx:", bSender.sendTxNum, "failed tx:", bSender.sendErrTxNum, "cycle times:", bSender.cycle, "cost time:", time.Since(processStart))
+			"success send tx:", bSender.sendTxNum, "failed tx:", bSender.sendErrTxNum,
+			"pendingTxCount:", bSender.pendingCount, "cycle times:", bSender.cycle, "cost time:", time.Since(processStart))
 
 		time.Sleep(time.Second)
 	}
@@ -300,15 +318,23 @@ func SignBurn(bSender *burnSender, senderAddr common.Address, signKey *ecdsa.Pri
 func waitSignBurnTxATV2(sigChan chan *types.Transaction, sender *burnSender) {
 	var startRecord time.Time
 	var sendCost time.Duration
+	var durationTime = time.Now()
 	for {
 		var count int
 		if len(sender.recvTxChan) == 0 {
 			if !startRecord.IsZero() { //控制发送速度
 				sendCost = time.Now().Sub(startRecord)
-				if sendCost < time.Millisecond*800 {
+				if sendCost < time.Millisecond*800 { //每个压测批次间隔800毫秒
 					continue
 				}
+				//每个压测持续时间到达后休息时间是interval
+				if time.Now().Sub(durationTime) > time.Second*time.Duration(sender.duration) {
+					time.Sleep(time.Second * time.Duration(sender.interval))
+					//reset durationTime
+					durationTime = time.Now()
+				}
 			}
+
 			for tx := range sigChan {
 				count++
 				sender.recvTxChan <- tx
@@ -316,6 +342,7 @@ func waitSignBurnTxATV2(sigChan chan *types.Transaction, sender *burnSender) {
 				if count >= sender.repeat {
 					// 按并发数量触发执行开关（CPU核数）
 					startRecord = time.Now()
+
 					for i := 0; i < sender.proceeNum; i++ {
 						runChan <- true
 					}
@@ -330,6 +357,29 @@ func waitSignBurnTxATV2(sigChan chan *types.Transaction, sender *burnSender) {
 
 	}
 
+}
+
+func pendingTxCount(client *ethclient.Client, sender *burnSender) {
+	for {
+		time.Sleep(time.Millisecond * 400)
+		pendingCount, err := client.PendingTransactionCount(context.Background())
+		if err == nil {
+			sender.pendingCount = pendingCount
+			continue
+		}
+	}
+}
+func checkPendingTx(sender *burnSender) {
+	for {
+
+		if sender.pendingCount > sender.maxPending && sender.pendingCount > 0 {
+			fmt.Println("current pending", sender.pendingCount, "maxPending:", sender.maxPending)
+			time.Sleep(time.Second)
+			continue
+		}
+		return
+
+	}
 }
 func waitSendBurnTxATV2(sender *burnSender) {
 
@@ -352,6 +402,7 @@ func waitSendBurnTxATV2(sender *burnSender) {
 					select {
 
 					case tx := <-sender.recvTxChan:
+						checkPendingTx(sender)
 						err := client.SendTransaction(context.Background(), tx)
 						if err != nil {
 							signer := types.NewEIP155Signer(tx.ChainId())
@@ -366,7 +417,10 @@ func waitSendBurnTxATV2(sender *burnSender) {
 						}
 						atomic.AddInt64(&sender.sendTxNum, 1)
 						if sender.view {
-							fmt.Println("send tx at:", tx.Hash().Hex(), "processNum:", index, "tx.Nonce:", tx.Nonce())
+							signer := types.NewEIP155Signer(tx.ChainId())
+							from, _ := types.Sender(signer, tx)
+							//fmt.Println("send tx at:", tx.Hash().Hex(), "processNum:", index, "tx.Nonce:", tx.Nonce())
+							sender.hashChan <- fmt.Sprintf("send tx hash:%s,from:%s,tx.Nonce:%d\n", tx.Hash().Hex(), from, tx.Nonce())
 						}
 
 					default:
@@ -385,5 +439,19 @@ func waitSendBurnTxATV2(sender *burnSender) {
 
 			}
 		}(i)
+	}
+}
+
+func write2File(sender *burnSender) {
+	file, err := os.Create("burnStress.txt")
+	defer file.Close()
+	if err != nil {
+		panic(err)
+	}
+	writer := bufio.NewWriter(file)
+
+	for {
+		content := <-sender.hashChan
+		_, _ = writer.WriteString(content)
 	}
 }
