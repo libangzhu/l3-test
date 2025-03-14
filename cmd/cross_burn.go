@@ -292,6 +292,14 @@ type childKeyAddr struct {
 	nonce int64
 }
 
+type sigleSigner struct {
+	key              *ecdsa.PrivateKey
+	pendingNonce     uint64
+	pendingNonceTime time.Time
+	aysncNonce       uint64
+	signCyclce       int
+}
+
 type burnSender struct {
 	sender           common.Address
 	senderKey        *ecdsa.PrivateKey
@@ -310,16 +318,17 @@ type burnSender struct {
 	bridgeServiceFee *big.Int
 	gasPrice         *big.Int
 	nodeUrl          string
-	//child            chan *childKeyAddr
-	child        []*childKeyAddr
-	approve      bool
-	view         bool
-	interval     int64
-	duration     int64
-	maxPending   uint
-	pendingCount uint
-	queuedCount  uint
-	hashChan     chan string
+	child            []*childKeyAddr
+	keyMutex         sync.Mutex
+	keyStore         map[common.Address]*sigleSigner
+	approve          bool
+	view             bool
+	interval         int64
+	duration         int64
+	maxPending       uint
+	pendingCount     uint
+	queuedCount      uint
+	hashChan         chan string
 }
 
 type waitBurn struct {
@@ -711,6 +720,7 @@ func PrepareAuth4MultiEthereum(client ethinterface.EthClientSpec, privateKey *ec
 		log.Error("PrepareAuth NewKeyedTransactorWithChainID", "err", err, "chainID", chainID)
 		return nil, err
 	}
+	//fmt.Println("gasprice:", gasPrice)
 	auth.Value = big.NewInt(0) // in wei
 	auth.GasLimit = GasLimit
 	auth.GasPrice = big.NewInt(gasPrice.Int64() * 2)
@@ -738,11 +748,24 @@ func getNonce4MultiEth(sender common.Address, client ethinterface.EthClientSpec,
 }
 
 func getNonceFromChain(sender common.Address, client ethinterface.EthClientSpec, addr2TxNonce map[common.Address]*NonceMutex) (*big.Int, error) {
-
-	nonce, err := client.PendingNonceAt(context.Background(), sender)
-	if nil != err {
-		return nil, err
+	var nonce uint64
+	var err error
+	eclient, ok := client.(*ethclient.Client)
+	if ok {
+		nonce, err = eclient.NonceAt(context.Background(), sender, nil)
+		if nil != err {
+			return nil, err
+		}
+	} else {
+		panic(err)
 	}
+	//} else {
+	//	nonce, err = client.PendingNonceAt(context.Background(), sender)
+	//	if nil != err {
+	//		return nil, err
+	//	}
+	//}
+
 	//fmt.Println("getNonceFromChain address", sender.String(), "nonce", nonce)
 	n := new(NonceMutex)
 	n.Nonce = int64(nonce)

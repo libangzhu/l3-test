@@ -52,10 +52,11 @@ func testTLS(RPCAddr string) string {
 }
 
 // run :
-func run(RPCAddr, NodeAddr, RegisterAddr string) {
+func run(RPCAddr, NodeAddr, RegisterAddr string, chainID int64) {
 	//test tls is enable
 	//RPCAddr = testTLS(RPCAddr)
 	rootCmd.PersistentFlags().String("rpc_laddr", RPCAddr, "http url")
+	rootCmd.PersistentFlags().Int64("signChainID", chainID, "sign chain id")
 	//rootCmd.PersistentFlags().String("node_addr", NodeAddr, "bsc node url")
 	//rootCmd.PersistentFlags().String("eth_chain_name", "Binance", "chain name")
 	//rootCmd.PersistentFlags().String("register_addr", RegisterAddr, "contract register address")
@@ -69,9 +70,13 @@ func run(RPCAddr, NodeAddr, RegisterAddr string) {
 func main() {
 
 	if buildflags.RPCAddr == "" {
-		//buildflags.RPCAddr = "http://52.74.204.233:8545"
-		buildflags.RPCAddr = "http://18.142.155.76:8545"
+		buildflags.RPCAddr = "http://54.151.174.251:8545"
 	}
 
-	run(buildflags.RPCAddr, buildflags.NodeAddr, buildflags.RegisterAddr)
+	if buildflags.SignChainID == 0 {
+		buildflags.SignChainID = 202588
+		chainID = buildflags.SignChainID
+	}
+
+	run(buildflags.RPCAddr, buildflags.NodeAddr, buildflags.RegisterAddr, buildflags.SignChainID)
 }

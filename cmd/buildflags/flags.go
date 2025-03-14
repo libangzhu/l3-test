@@ -6,6 +6,7 @@ package buildflags
 
 // RPCAddr  rpc address
 var RPCAddr string
+var SignChainID int64
 
 // NodeAddr ...
 var NodeAddr string

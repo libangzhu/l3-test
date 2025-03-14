@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"context"
 	"crypto/ecdsa"
+	"errors"
 	"fmt"
-
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
@@ -17,6 +19,7 @@ import (
 	"github.com/zhengjunhe/l3-test/cmd/contracts/contracts4juchain/generated"
 	"os"
 	"os/signal"
+	"strings"
 	"sync/atomic"
 	"syscall"
 
@@ -109,12 +112,13 @@ func burnTokenATV2(cmd *cobra.Command, args []string) {
 		duration:       duration,
 		maxPending:     uint(maxPending),
 		hashChan:       make(chan string, 500),
+		keyStore:       make(map[common.Address]*sigleSigner),
 	}
 
 	// 提前生成多个地址(repeat)信息
 	bSender.genMutiKeyAddr(masterKey)
 
-	signChan := make(chan *types.Transaction, 10000)
+	signChan := make(chan *types.Transaction, bSender.repeat)
 	//循环批量生成签名交易(无限循环)
 	go signBurnTxATV2(bSender, signChan)
 	//等待签名数量达到一定后往发送管道输送(recvTxChan/runChan)
@@ -176,8 +180,10 @@ func (b *burnSender) genMutiKeyAddr(masterKey *bip32.Key) {
 		if err != nil {
 			panic(err)
 		}
-
+		b.keyMutex.Lock()
 		b.child = append(b.child, &childKeyAddr{addr: addr, key: signKey})
+		b.keyStore[addr] = &sigleSigner{key: signKey}
+		b.keyMutex.Unlock()
 		//b.child <- &childKeyAddr{addr: addr, key: signKey}
 	}
 }
@@ -189,7 +195,13 @@ func signBurnTxATV2(sender *burnSender, sigChan chan *types.Transaction) {
 	addrPerGoroutime := txCnt / numCPUs
 	fmt.Println("runtime.NumCPU()", numCPUs, "addrPerGoroutime", addrPerGoroutime, "sender num:", txCnt)
 	time.Sleep(time.Second * 3)
+
 	for {
+		if len(sender.recvTxChan) != 0 {
+			time.Sleep(400 * time.Millisecond)
+			continue
+		}
+		time.Sleep(time.Millisecond * 200)
 		var wg sync.WaitGroup
 		//当交易数比CPU核数还要少的情况，一次性处理
 		if addrPerGoroutime == 0 {
@@ -288,13 +300,7 @@ func SignBurn(bSender *burnSender, senderAddr common.Address, signKey *ecdsa.Pri
 		if nil != err {
 			panic(err)
 		}
-		//fmt.Println("+++++++approve tx:", tx.Hash().Hex(), "nonce:", tx.Nonce(), "from:", senderAddr)
-		//err = waitEthTxFinished(bSender.client, tx.Hash(), "Approve")
-		//if nil != err {
-		//	fmt.Println("waitEthTxFinished:", err)
-		//	return nil, err
-		//}
-		//fmt.Println("+++++++approve tx:", tx.Hash().Hex(), "nonce:", tx.Nonce(), "from:", senderAddr)
+
 		txs = append(txs, tx)
 		return txs, nil
 
@@ -307,6 +313,33 @@ func SignBurn(bSender *burnSender, senderAddr common.Address, signKey *ecdsa.Pri
 
 	auth.Value.SetInt64(bSender.bridgeServiceFee.Int64())
 	auth.NoSend = true
+	bSender.keyMutex.Lock()
+	keyinfo, _ := bSender.keyStore[senderAddr]
+	eClient, _ := bSender.client.(*ethclient.Client)
+	if keyinfo.aysncNonce == 0 {
+
+		keyinfo.pendingNonce, _ = eClient.NonceAt(context.Background(), senderAddr, nil)
+		keyinfo.aysncNonce = keyinfo.pendingNonce
+		auth.Nonce = big.NewInt(int64(keyinfo.aysncNonce))
+		keyinfo.aysncNonce = keyinfo.aysncNonce + 1
+		bSender.keyStore[senderAddr] = keyinfo
+	} else {
+		if bSender.cycle%10 == 0 {
+			keyinfo.pendingNonce, _ = eClient.NonceAt(context.Background(), senderAddr, nil)
+		}
+		//
+		auth.Nonce = big.NewInt(int64(keyinfo.aysncNonce))
+		keyinfo.aysncNonce = keyinfo.aysncNonce + 1
+		bSender.keyStore[senderAddr] = keyinfo
+
+		if keyinfo.aysncNonce > keyinfo.pendingNonce+20 {
+			keyinfo.aysncNonce, _ = eClient.NonceAt(context.Background(), senderAddr, nil)
+			keyinfo.pendingNonce = keyinfo.aysncNonce
+			auth.Nonce = big.NewInt(int64(keyinfo.aysncNonce))
+		}
+	}
+	bSender.keyMutex.Unlock()
+
 	tx, err := bSender.bridgeBankIns.BurnBridgeTokens(auth, bSender.chainID2wd, senderAddr, bSender.tokenAddr, bSender.amount)
 	if nil != err {
 		return nil, err
@@ -324,7 +357,7 @@ func waitSignBurnTxATV2(sigChan chan *types.Transaction, sender *burnSender) {
 		if len(sender.recvTxChan) == 0 {
 			if !startRecord.IsZero() { //控制发送速度
 				sendCost = time.Now().Sub(startRecord)
-				if sendCost < time.Millisecond*800 { //每个压测批次间隔800毫秒
+				if sendCost < time.Millisecond*1000 { //每个压测批次间隔800毫秒
 					continue
 				}
 				//每个压测持续时间到达后休息时间是interval
@@ -400,21 +433,84 @@ func waitSendBurnTxATV2(sender *burnSender) {
 				for {
 
 					select {
-
 					case tx := <-sender.recvTxChan:
 						checkPendingTx(sender)
 						err := client.SendTransaction(context.Background(), tx)
 						if err != nil {
+							//针对err类型做不同的处理
 							signer := types.NewEIP155Signer(tx.ChainId())
 							from, _ := types.Sender(signer, tx)
 							fmt.Println("Failed to sendTxAT with err:", err, "will retry...:", from)
+							switch {
+							case isNonceTooLowError(err):
+								// 强制同步并重新签名
+								//在线获取新的pendingNonce
+								pendingNonce, err := client.NonceAt(context.Background(), from, nil)
 
-							nMutex.Lock()
-							delete(addr2NonceOnly4test, from)
-							nMutex.Unlock()
-							atomic.AddInt64(&sender.sendErrTxNum, 1)
-							continue
+								if err == nil {
+									newTx := types.NewTransaction(
+										pendingNonce,
+										*tx.To(),
+										tx.Value(),
+										tx.Gas(),
+										tx.GasPrice(),
+										tx.Data(),
+									)
+									//resign
+									sender.keyMutex.Lock()
+									keyinfo, ok := sender.keyStore[from]
+									if ok {
+										keyinfo.pendingNonce = pendingNonce + 1
+										keyinfo.aysncNonce = keyinfo.pendingNonce
+										sender.keyStore[from] = keyinfo
+										signedTx, _ := types.SignTx(newTx, types.LatestSignerForChainID(tx.ChainId()), keyinfo.key)
+										_ = client.SendTransaction(context.Background(), signedTx)
+
+									}
+									sender.keyMutex.Unlock()
+								}
+
+							case isReplaceUnderpricedError(err), isAlreadKnown(err):
+								fmt.Println("[WARNING]:ReplaceUnderpriced  err", err)
+								// 提升 gasPrice*20% 重新签名
+								newGasPrice := new(big.Int).Mul(tx.GasPrice(), big.NewInt(20))
+								newGasPrice.Div(newGasPrice, big.NewInt(10))
+								newTx := types.NewTransaction(
+									tx.Nonce(),
+									*tx.To(),
+									tx.Value(),
+									tx.Gas(),
+									newGasPrice,
+									tx.Data(),
+								)
+
+								//resign
+								sender.keyMutex.Lock()
+								keyinfo, ok := sender.keyStore[from]
+								if ok {
+									signedTx, _ := types.SignTx(newTx, types.LatestSignerForChainID(tx.ChainId()), keyinfo.key)
+									err = client.SendTransaction(context.Background(), signedTx)
+									if err != nil {
+										select {
+										case sender.recvTxChan <- signedTx:
+										default:
+											fmt.Println("recvTxChan full....")
+										}
+									}
+								}
+								sender.keyMutex.Unlock()
+
+							default:
+								fmt.Println("[WARNING]:other unknown err", err)
+								nMutex.Lock()
+								delete(addr2NonceOnly4test, from)
+								nMutex.Unlock()
+								atomic.AddInt64(&sender.sendErrTxNum, 1)
+								break
+							}
+
 						}
+
 						atomic.AddInt64(&sender.sendTxNum, 1)
 						if sender.view {
 							signer := types.NewEIP155Signer(tx.ChainId())
@@ -454,4 +550,25 @@ func write2File(sender *burnSender) {
 		content := <-sender.hashChan
 		_, _ = writer.WriteString(content)
 	}
+}
+
+// error type
+
+func isAccountMaxLimitError(err error) bool {
+	return err != nil && (errors.Is(err, txpool.ErrAccountLimitExceeded))
+}
+
+func isNonceTooLowError(err error) bool {
+	return err != nil && (errors.Is(err, core.ErrNonceTooLow) ||
+		errors.Is(err, context.DeadlineExceeded)) || strings.Contains(err.Error(), "nonce too low")
+
+}
+
+func isReplaceUnderpricedError(err error) bool {
+	return err != nil && errors.Is(err, txpool.ErrReplaceUnderpriced) || errors.Is(err, txpool.ErrUnderpriced) ||
+		strings.Contains(err.Error(), "replacement transaction underpriced") //replacement transaction underpriced
+}
+
+func isAlreadKnown(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "already known")
 }

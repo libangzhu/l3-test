@@ -104,7 +104,7 @@ func tokenTransfer(cmd *cobra.Command, args []string) {
 			return
 		}
 		addr := crypto.PubkeyToAddress(*cpub)
-		tx := mSender.SignJuTokenTx(common.HexToAddress(tokenAddr), addr, mSender.nonce_start+uint64(i), big.NewInt(1e10))
+		tx := mSender.SignJuTokenTx(common.HexToAddress(tokenAddr), addr, mSender.nonce_start+uint64(i), big.NewInt(1e12))
 
 		txs = append(txs, tx)
 	}

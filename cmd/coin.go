@@ -21,6 +21,8 @@ import (
 	"time"
 )
 
+var chainID int64 = 202588
+
 func transferCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "transfer",
@@ -75,7 +77,7 @@ func transfer(rpcLaddr string, repeat int, mnemonic string) {
 		return
 	}
 
-	nonce, err := client.NonceAt(context.Background(), ethSender, nil)
+	nonce, err := client.PendingNonceAt(context.Background(), ethSender)
 	if err != nil {
 		fmt.Println("client.NonceAt with err:", err)
 		return
@@ -387,7 +389,8 @@ func (m *multiSender) sendJuTxV2(i int) {
 				m.txMutex.Lock()
 				m.sendTxNum++
 				m.txMutex.Unlock()
-				log.Println("Failed to send transaction: %v", err, "sendTx:", m.atoTxNum)
+
+				log.Println("Failed to send transaction:", err, "sendTx:", m.atoTxNum)
 				break
 			}
 			m.txMutex.Lock()
@@ -428,7 +431,6 @@ func (m *multiSender) SignJuTx(to common.Address, nonce uint64, amount *big.Int)
 
 const Purpose uint32 = 0x8000002C
 const TypeEther uint32 = 0x8000003c
-const chainID = 66682666
 
 func newKeyFromMasterKey(masterKey *bip32.Key, coin, account, chain, address uint32) (*bip32.Key, error) {
 	child, err := masterKey.NewChildKey(Purpose)
