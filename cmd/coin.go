@@ -77,7 +77,7 @@ func transfer(rpcLaddr string, repeat int, mnemonic string) {
 		return
 	}
 
-	nonce, err := client.PendingNonceAt(context.Background(), ethSender)
+	nonce, err := client.NonceAt(context.Background(), ethSender, nil)
 	if err != nil {
 		fmt.Println("client.NonceAt with err:", err)
 		return
@@ -107,7 +107,7 @@ func transfer(rpcLaddr string, repeat int, mnemonic string) {
 			return
 		}
 		addr := crypto.PubkeyToAddress(*cpub)
-		tx := mSender.SignJuTx(addr, mSender.nonce_start+uint64(i), big.NewInt(1e18))
+		tx := mSender.SignJuTx(addr, mSender.nonce_start+uint64(i), big.NewInt(1).Mul(big.NewInt(1e18), big.NewInt(10)))
 
 		txs = append(txs, tx)
 	}
@@ -418,8 +418,9 @@ func (m *multiSender) SignJuTx(to common.Address, nonce uint64, amount *big.Int)
 	}
 
 	// 5. 创建交易
-	//fmt.Println("gasPrice", gasPrice, "nonce", nonce, "amount", amount)
-	tx := types.NewTransaction(nonce, to, amount, gasLimit, big.NewInt(gasPrice.Int64()), nil)
+	//
+	fmt.Println("gasPrice", gasPrice, "nonce", nonce, "amount", amount)
+	tx := types.NewTransaction(nonce, to, amount, gasLimit, big.NewInt(gasPrice.Int64()*10), nil)
 	// 6. 使用私钥签名交易
 
 	signedTx, err := types.SignTx(tx, types.NewEIP155Signer(big.NewInt(chainID)), m.senderKey)

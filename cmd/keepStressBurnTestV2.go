@@ -326,8 +326,14 @@ func SignBurn(bSender *burnSender, senderAddr common.Address, signKey *ecdsa.Pri
 	} else {
 		if bSender.cycle%10 == 0 {
 			keyinfo.pendingNonce, _ = eClient.NonceAt(context.Background(), senderAddr, nil)
+
 		}
-		//
+		gasPrice, _ = eClient.SuggestGasPrice(context.Background())
+		if gasPrice.Cmp(auth.GasPrice) > 0 {
+			newGasPrice := new(big.Int).Mul(gasPrice, big.NewInt(12))
+			newGasPrice.Div(newGasPrice, big.NewInt(10))
+			auth.GasPrice = newGasPrice
+		}
 		auth.Nonce = big.NewInt(int64(keyinfo.aysncNonce))
 		keyinfo.aysncNonce = keyinfo.aysncNonce + 1
 		bSender.keyStore[senderAddr] = keyinfo
@@ -473,7 +479,7 @@ func waitSendBurnTxATV2(sender *burnSender) {
 							case isReplaceUnderpricedError(err), isAlreadKnown(err):
 								fmt.Println("[WARNING]:ReplaceUnderpriced  err", err)
 								// 提升 gasPrice*20% 重新签名
-								newGasPrice := new(big.Int).Mul(tx.GasPrice(), big.NewInt(20))
+								newGasPrice := new(big.Int).Mul(tx.GasPrice(), big.NewInt(12))
 								newGasPrice.Div(newGasPrice, big.NewInt(10))
 								newTx := types.NewTransaction(
 									tx.Nonce(),
@@ -499,7 +505,7 @@ func waitSendBurnTxATV2(sender *burnSender) {
 									}
 								}
 								sender.keyMutex.Unlock()
-
+								time.Sleep(time.Millisecond * 200)
 							default:
 								fmt.Println("[WARNING]:other unknown err", err)
 								nMutex.Lock()
