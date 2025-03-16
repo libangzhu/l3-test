@@ -53,7 +53,7 @@ func addBurnStressV2Flags(cmd *cobra.Command) {
 	_ = cmd.MarkFlagRequired("mnemonic")
 	cmd.Flags().BoolP("approve", "a", false, "approve for burn")
 	cmd.Flags().BoolP("view", "v", false, "view burn tx hash")
-
+	cmd.Flags().Int64P("gasPrice", "g", 0, "default 5 gwei")
 }
 
 func burnTokenATV2(cmd *cobra.Command, args []string) {
@@ -67,9 +67,11 @@ func burnTokenATV2(cmd *cobra.Command, args []string) {
 	duration, _ := cmd.Flags().GetInt64("duration")
 	interval, _ := cmd.Flags().GetInt64("interval")
 	maxPending, _ := cmd.Flags().GetInt("maxPending")
+	gprice, _ := cmd.Flags().GetInt64("gasPrice")
 	fmt.Println("registerAddr:", registerAddr)
 	fmt.Println("token:", token)
 	fmt.Println("approve for burn:", approve)
+	fmt.Println("gprice for burn:", gprice)
 	if err != nil {
 		panic(err)
 	}
@@ -117,7 +119,8 @@ func burnTokenATV2(cmd *cobra.Command, args []string) {
 
 	// 提前生成多个地址(repeat)信息
 	bSender.genMutiKeyAddr(masterKey)
-
+	bSender.gasPrice = big.NewInt(1).Mul(big.NewInt(int64(gprice)), big.NewInt(1e9))
+	fmt.Println("bSender.gasPrice:", bSender.gasPrice)
 	signChan := make(chan *types.Transaction, bSender.repeat)
 	//循环批量生成签名交易(无限循环)
 	go signBurnTxATV2(bSender, signChan)
@@ -155,7 +158,7 @@ func burnTokenATV2(cmd *cobra.Command, args []string) {
 	for {
 		fmt.Println("signChan capacity", len(signChan), "recvTxChan capacity", len(bSender.recvTxChan), "runchan:", len(runChan),
 			"success send tx:", bSender.sendTxNum, "failed tx:", bSender.sendErrTxNum,
-			"pendingTxCount:", bSender.pendingCount, "cycle times:", bSender.cycle, "cost time:", time.Since(processStart))
+			"pendingTxCount:", bSender.pendingCount, "cycle times:", bSender.cycle, "cost time:", time.Since(processStart), "gasprice:", gasPrice)
 
 		time.Sleep(time.Second)
 	}
@@ -328,12 +331,7 @@ func SignBurn(bSender *burnSender, senderAddr common.Address, signKey *ecdsa.Pri
 			keyinfo.pendingNonce, _ = eClient.NonceAt(context.Background(), senderAddr, nil)
 
 		}
-		gasPrice, _ = eClient.SuggestGasPrice(context.Background())
-		if gasPrice.Cmp(auth.GasPrice) > 0 {
-			newGasPrice := new(big.Int).Mul(gasPrice, big.NewInt(12))
-			newGasPrice.Div(newGasPrice, big.NewInt(10))
-			auth.GasPrice = newGasPrice
-		}
+
 		auth.Nonce = big.NewInt(int64(keyinfo.aysncNonce))
 		keyinfo.aysncNonce = keyinfo.aysncNonce + 1
 		bSender.keyStore[senderAddr] = keyinfo
@@ -345,7 +343,25 @@ func SignBurn(bSender *burnSender, senderAddr common.Address, signKey *ecdsa.Pri
 		}
 	}
 	bSender.keyMutex.Unlock()
+	if bSender.gasPrice.Int64() != 0 {
+		auth.GasPrice = bSender.gasPrice
+	} else {
+		for {
+			gasPrice, _ = eClient.SuggestGasPrice(context.Background())
+			if gasPrice.Cmp(big.NewInt(50e9)) > 0 {
+				time.Sleep(time.Second)
+				fmt.Println("current SuggestGasPrice:", gasPrice, "bSender.gasPrice:", bSender.gasPrice)
+				continue
+			}
+			break
+		}
+		if gasPrice.Cmp(auth.GasPrice) > 0 {
+			newGasPrice := new(big.Int).Mul(gasPrice, big.NewInt(12))
+			newGasPrice.Div(newGasPrice, big.NewInt(10))
+			auth.GasPrice = newGasPrice
+		}
 
+	}
 	tx, err := bSender.bridgeBankIns.BurnBridgeTokens(auth, bSender.chainID2wd, senderAddr, bSender.tokenAddr, bSender.amount)
 	if nil != err {
 		return nil, err
@@ -479,7 +495,7 @@ func waitSendBurnTxATV2(sender *burnSender) {
 							case isReplaceUnderpricedError(err), isAlreadKnown(err):
 								fmt.Println("[WARNING]:ReplaceUnderpriced  err", err)
 								// 提升 gasPrice*20% 重新签名
-								newGasPrice := new(big.Int).Mul(tx.GasPrice(), big.NewInt(12))
+								/*newGasPrice := new(big.Int).Mul(tx.GasPrice(), big.NewInt(12))
 								newGasPrice.Div(newGasPrice, big.NewInt(10))
 								newTx := types.NewTransaction(
 									tx.Nonce(),
@@ -505,7 +521,7 @@ func waitSendBurnTxATV2(sender *burnSender) {
 									}
 								}
 								sender.keyMutex.Unlock()
-								time.Sleep(time.Millisecond * 200)
+								time.Sleep(time.Millisecond * 200)*/
 							default:
 								fmt.Println("[WARNING]:other unknown err", err)
 								nMutex.Lock()

@@ -420,7 +420,7 @@ func (m *multiSender) SignJuTx(to common.Address, nonce uint64, amount *big.Int)
 	// 5. 创建交易
 	//
 	fmt.Println("gasPrice", gasPrice, "nonce", nonce, "amount", amount)
-	tx := types.NewTransaction(nonce, to, amount, gasLimit, big.NewInt(gasPrice.Int64()*10), nil)
+	tx := types.NewTransaction(nonce, to, amount, gasLimit, big.NewInt(40e9), nil)
 	// 6. 使用私钥签名交易
 
 	signedTx, err := types.SignTx(tx, types.NewEIP155Signer(big.NewInt(chainID)), m.senderKey)

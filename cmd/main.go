@@ -24,6 +24,7 @@ func init() {
 		crossBurnStressCmd(),
 		tokenCmd(),             // step 2
 		crossBurnStressCmdV2(), // step 3
+		checkNonceCmd(),
 	)
 }
 

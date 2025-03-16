@@ -723,7 +723,7 @@ func PrepareAuth4MultiEthereum(client ethinterface.EthClientSpec, privateKey *ec
 	//fmt.Println("gasprice:", gasPrice)
 	auth.Value = big.NewInt(0) // in wei
 	auth.GasLimit = GasLimit
-	auth.GasPrice = big.NewInt(gasPrice.Int64() * 2)
+	auth.GasPrice = big.NewInt(gasPrice.Int64())
 	nMutex.Lock()
 	defer nMutex.Unlock()
 
