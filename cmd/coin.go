@@ -36,20 +36,22 @@ func transferCmd() *cobra.Command {
 func addTransferFlags(cmd *cobra.Command) {
 	cmd.Flags().IntP("repeat", "r", 1, "repeat number")
 	_ = cmd.MarkFlagRequired("repeat")
-
+	cmd.Flags().IntP("start_index", "i", 0, "start index")
 	cmd.Flags().StringP("mnemonic", "m", "", "mnemonic")
 	_ = cmd.MarkFlagRequired("mnemonic")
 }
 
 func transferCoin(cmd *cobra.Command, args []string) {
 	rpcLaddr, _ := cmd.Flags().GetString("rpc_laddr")
+	chainID, _ = cmd.Flags().GetInt64("signChainID")
+	startIndex, _ := cmd.Flags().GetInt("start_index")
 	repeat, _ := cmd.Flags().GetInt("repeat")
 	mnemonic, _ := cmd.Flags().GetString("mnemonic")
-	transfer(rpcLaddr, repeat, mnemonic)
+	transfer(rpcLaddr, startIndex, repeat, mnemonic)
 }
 
-func transfer(rpcLaddr string, repeat int, mnemonic string) {
-
+func transfer(rpcLaddr string, start, repeat int, mnemonic string) {
+	fmt.Println("chainID:", chainID)
 	seed, err := bip39.NewSeedWithErrorChecking(mnemonic, "")
 	if err != nil {
 		fmt.Println("NewSeedWithErrorChecking with error:", err.Error())
@@ -94,7 +96,7 @@ func transfer(rpcLaddr string, repeat int, mnemonic string) {
 	var privkeyArr []*ecdsa.PrivateKey
 	var txs []*types.Transaction
 	for i := 0; i < repeat; i++ {
-		bkey, err := newKeyFromMasterKey(masterKey, TypeEther, bip32.FirstHardenedChild, 0, uint32(i))
+		bkey, err := newKeyFromMasterKey(masterKey, TypeEther, bip32.FirstHardenedChild, 0, uint32(i+start))
 		if err != nil {
 			fmt.Println("Failed to newKeyFromMasterKey with err:", err)
 			return
@@ -420,7 +422,7 @@ func (m *multiSender) SignJuTx(to common.Address, nonce uint64, amount *big.Int)
 	// 5. 创建交易
 	//
 	fmt.Println("gasPrice", gasPrice, "nonce", nonce, "amount", amount)
-	tx := types.NewTransaction(nonce, to, amount, gasLimit, big.NewInt(40e9), nil)
+	tx := types.NewTransaction(nonce, to, amount, gasLimit, big.NewInt(3e9), nil)
 	// 6. 使用私钥签名交易
 
 	signedTx, err := types.SignTx(tx, types.NewEIP155Signer(big.NewInt(chainID)), m.senderKey)

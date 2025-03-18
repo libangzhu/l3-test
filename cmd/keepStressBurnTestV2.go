@@ -58,6 +58,7 @@ func addBurnStressV2Flags(cmd *cobra.Command) {
 
 func burnTokenATV2(cmd *cobra.Command, args []string) {
 	rpcLaddr, _ := cmd.Flags().GetString("rpc_laddr")
+	chainID, _ = cmd.Flags().GetInt64("signChainID")
 	token, _ := cmd.Flags().GetString("token")
 	registerAddr, _ := cmd.Flags().GetString("registerAddr")
 	repeat, _ := cmd.Flags().GetInt("repeat")

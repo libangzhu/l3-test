@@ -53,6 +53,7 @@ func burnTokenAT(cmd *cobra.Command, args []string) {
 	repeat, _ := cmd.Flags().GetInt("repeat")
 	chainIDWd, err := cmd.Flags().GetInt("chainID")
 	key, err := cmd.Flags().GetString("key")
+	chainID, _ = cmd.Flags().GetInt64("signChainID")
 	if err != nil {
 		panic(err)
 	}
